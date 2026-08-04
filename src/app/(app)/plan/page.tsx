@@ -8,6 +8,7 @@ import {
   TrendingUp,
   Upload,
   ChevronRight,
+  Settings,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -91,6 +92,25 @@ export default function PlanPage() {
             </Link>
           ))}
         </div>
+
+        <Link href="/profile" className="block">
+          <Card>
+            <CardContent className="flex items-center gap-4 p-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#ffb84d]/15 text-[#ffb84d]">
+                <Settings className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-display font-semibold text-[#f7f1e8]">
+                  Settings & profile
+                </p>
+                <p className="truncate text-xs text-[#9a9186]">
+                  Questionnaire, tone, notifications
+                </p>
+              </div>
+              <ChevronRight className="h-4 w-4 shrink-0 text-[#6f675e]" />
+            </CardContent>
+          </Card>
+        </Link>
 
         <Link href="/import" className="block">
           <Card className="border-dashed border-white/10 bg-transparent shadow-none">

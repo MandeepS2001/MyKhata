@@ -34,6 +34,7 @@ const base: Profile = {
   rentIsSplit: true,
   mortgagePaymentCents: null,
   mortgagePaymentFrequency: null,
+  financialPriorities: [],
 };
 
 describe("living costs", () => {

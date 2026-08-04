@@ -61,6 +61,7 @@ const baseProfile: Profile = {
   rentIsSplit: false,
   mortgagePaymentCents: null,
   mortgagePaymentFrequency: null,
+  financialPriorities: [],
 };
 
 function makeSafeToSpend(cents: number): SafeToSpendResult {

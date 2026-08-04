@@ -107,6 +107,7 @@ export interface Profile {
   rentIsSplit: boolean;
   mortgagePaymentCents: number | null;
   mortgagePaymentFrequency: RecurringFrequency | null;
+  financialPriorities: string[];
 }
 
 export interface Account {

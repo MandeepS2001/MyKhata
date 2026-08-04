@@ -9,12 +9,26 @@ import { Card, CardContent } from "@/components/ui/card";
 import { updateProfile, completeOnboarding } from "@/actions/profile";
 import { seedDemoData } from "@/actions/demo";
 import { TONE_LABELS, type FinancialTone } from "@/lib/tone";
-import { dollarsToCents } from "@/lib/currency";
-import type { HousingStatus, RecurringFrequency } from "@/domain/models";
+import { centsToDollars, dollarsToCents } from "@/lib/currency";
+import type {
+  CautionLevel,
+  HousingStatus,
+  PaydayFrequency,
+  RecurringFrequency,
+  IncomeType,
+} from "@/domain/models";
 import Link from "next/link";
 
-const STEPS = ["welcome", "profile", "living", "priorities", "data"] as const;
-const PRIORITIES = [
+const ONBOARDING_STEPS = [
+  "welcome",
+  "profile",
+  "living",
+  "priorities",
+  "data",
+] as const;
+const EDIT_STEPS = ["profile", "living", "priorities"] as const;
+
+export const PRIORITY_OPTIONS = [
   "Emergency fund",
   "Business fund",
   "Travel",
@@ -42,6 +56,26 @@ const HOUSING_OPTIONS: { value: HousingStatus; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
+export type WizardInitialValues = {
+  displayName?: string | null;
+  paydayFrequency?: PaydayFrequency | null;
+  incomeType?: IncomeType | null;
+  incomeCents?: number | null;
+  financialTone?: FinancialTone | null;
+  cautionLevel?: CautionLevel | null;
+  financialPriorities?: string[] | null;
+  hasCar?: boolean | null;
+  carPaymentCents?: number | null;
+  carPaymentFrequency?: RecurringFrequency | null;
+  housingStatus?: HousingStatus | null;
+  rentFrequency?: RecurringFrequency | null;
+  rentTotalCents?: number | null;
+  rentShareCents?: number | null;
+  rentIsSplit?: boolean | null;
+  mortgagePaymentCents?: number | null;
+  mortgagePaymentFrequency?: RecurringFrequency | null;
+};
+
 function dollarsOrNull(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -50,33 +84,70 @@ function dollarsOrNull(value: string): number | null {
   return dollarsToCents(n);
 }
 
-export function OnboardingWizard() {
+function centsField(cents: number | null | undefined): string {
+  if (cents == null || cents <= 0) return "";
+  return centsToDollars(cents);
+}
+
+export function OnboardingWizard({
+  mode = "onboarding",
+  initial,
+}: {
+  mode?: "onboarding" | "edit";
+  initial?: WizardInitialValues;
+}) {
   const router = useRouter();
+  const isEdit = mode === "edit";
+  const steps = isEdit ? EDIT_STEPS : ONBOARDING_STEPS;
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [displayName, setDisplayName] = useState("");
-  const [paydayFrequency, setPaydayFrequency] = useState("monthly");
-  const [incomeType, setIncomeType] = useState("salary");
-  const [income, setIncome] = useState("");
-  const [tone, setTone] = useState<FinancialTone>("direct");
-  const [selectedPriorities, setSelectedPriorities] = useState<string[]>([]);
+  const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
+  const [paydayFrequency, setPaydayFrequency] = useState(
+    initial?.paydayFrequency ?? "monthly"
+  );
+  const [incomeType, setIncomeType] = useState(initial?.incomeType ?? "salary");
+  const [income, setIncome] = useState(centsField(initial?.incomeCents));
+  const [tone, setTone] = useState<FinancialTone>(
+    initial?.financialTone ?? "direct"
+  );
+  const [cautionLevel, setCautionLevel] = useState<CautionLevel>(
+    initial?.cautionLevel ?? "balanced"
+  );
+  const [selectedPriorities, setSelectedPriorities] = useState<string[]>(
+    initial?.financialPriorities ?? []
+  );
 
-  const [hasCar, setHasCar] = useState(false);
-  const [carPayment, setCarPayment] = useState("");
+  const [hasCar, setHasCar] = useState(Boolean(initial?.hasCar));
+  const [carPayment, setCarPayment] = useState(
+    centsField(initial?.carPaymentCents)
+  );
   const [carPaymentFrequency, setCarPaymentFrequency] =
-    useState<RecurringFrequency>("monthly");
+    useState<RecurringFrequency>(initial?.carPaymentFrequency ?? "monthly");
 
-  const [housingStatus, setHousingStatus] = useState<HousingStatus | "">("");
-  const [rentFrequency, setRentFrequency] =
-    useState<RecurringFrequency>("weekly");
-  const [rentTotal, setRentTotal] = useState("");
-  const [rentIsSplit, setRentIsSplit] = useState(false);
-  const [rentShare, setRentShare] = useState("");
-  const [mortgagePayment, setMortgagePayment] = useState("");
+  const [housingStatus, setHousingStatus] = useState<HousingStatus | "">(
+    initial?.housingStatus ?? ""
+  );
+  const [rentFrequency, setRentFrequency] = useState<RecurringFrequency>(
+    initial?.rentFrequency ?? "weekly"
+  );
+  const [rentTotal, setRentTotal] = useState(
+    centsField(initial?.rentTotalCents)
+  );
+  const [rentIsSplit, setRentIsSplit] = useState(
+    Boolean(initial?.rentIsSplit)
+  );
+  const [rentShare, setRentShare] = useState(
+    centsField(initial?.rentShareCents)
+  );
+  const [mortgagePayment, setMortgagePayment] = useState(
+    centsField(initial?.mortgagePaymentCents)
+  );
   const [mortgageFrequency, setMortgageFrequency] =
-    useState<RecurringFrequency>("monthly");
+    useState<RecurringFrequency>(
+      initial?.mortgagePaymentFrequency ?? "monthly"
+    );
 
   function livingPayload() {
     const rentTotalCents = dollarsOrNull(rentTotal);
@@ -106,12 +177,27 @@ export function OnboardingWizard() {
     return updateProfile({
       displayName: displayName || "User",
       currency: "AUD",
-      paydayFrequency: paydayFrequency as "monthly",
-      incomeType: incomeType as "salary",
+      paydayFrequency: paydayFrequency as PaydayFrequency,
+      incomeType: incomeType as IncomeType,
       incomeCents: income ? dollarsToCents(parseFloat(income)) : undefined,
       financialTone: tone,
+      cautionLevel,
+      financialPriorities: selectedPriorities,
       ...livingPayload(),
     });
+  }
+
+  async function finishOnboarding(next: string) {
+    setLoading(true);
+    setError(null);
+    const result = await saveProfile();
+    if (result?.error) {
+      setError(result.error);
+      setLoading(false);
+      return;
+    }
+    await completeOnboarding();
+    router.push(next);
   }
 
   async function handleDemo() {
@@ -128,9 +214,15 @@ export function OnboardingWizard() {
     router.push("/home");
   }
 
-  async function handleSkip() {
+  async function handleSaveEdit() {
     setLoading(true);
     setError(null);
+    const livingError = validateLiving();
+    if (livingError) {
+      setError(livingError);
+      setLoading(false);
+      return;
+    }
     const result = await saveProfile();
     if (result?.error) {
       setError(result.error);
@@ -138,33 +230,8 @@ export function OnboardingWizard() {
       return;
     }
     await completeOnboarding();
-    router.push("/home");
-  }
-
-  async function handleImport() {
-    setLoading(true);
-    setError(null);
-    const result = await saveProfile();
-    if (result?.error) {
-      setError(result.error);
-      setLoading(false);
-      return;
-    }
-    await completeOnboarding();
-    router.push("/import");
-  }
-
-  async function handleConnectBank() {
-    setLoading(true);
-    setError(null);
-    const result = await saveProfile();
-    if (result?.error) {
-      setError(result.error);
-      setLoading(false);
-      return;
-    }
-    await completeOnboarding();
-    router.push("/banks");
+    router.push("/profile");
+    router.refresh();
   }
 
   function validateLiving(): string | null {
@@ -192,33 +259,49 @@ export function OnboardingWizard() {
     return null;
   }
 
-  const currentStep = STEPS[step];
+  const currentStep = steps[step]!;
 
   return (
     <div className="space-y-6">
       <div className="flex gap-1">
-        {STEPS.map((_, i) => (
+        {steps.map((_, i) => (
           <div
             key={i}
-            className={`h-1 flex-1 rounded-full ${i <= step ? "bg-emerald-500" : "bg-zinc-800"}`}
+            className={`h-1 flex-1 rounded-full ${
+              i <= step ? "bg-[#ffb84d]" : "bg-white/10"
+            }`}
           />
         ))}
       </div>
 
+      {isEdit && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-bold text-[#ffb84d]">Update questionnaire</p>
+          <Link
+            href="/profile"
+            className="text-sm text-[#9a9186] hover:text-[#f7f1e8]"
+          >
+            Cancel
+          </Link>
+        </div>
+      )}
+
       {error && (
-        <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+        <p className="rounded-xl border border-[#ffb84d]/30 bg-[#ffb84d]/10 px-4 py-3 text-sm text-[#ffb84d]">
           {error}
         </p>
       )}
 
       {currentStep === "welcome" && (
         <div className="space-y-6 py-8 text-center">
-          <h1 className="text-3xl font-bold text-zinc-100">Welcome to MyKhata</h1>
-          <div className="space-y-2 text-zinc-400">
+          <h1 className="font-display text-3xl font-semibold text-[#f7f1e8]">
+            Welcome to MyKhata
+          </h1>
+          <div className="space-y-2 text-[#9a9186]">
             <p>No spreadsheets.</p>
             <p>No manual expense tracking.</p>
             <p>No fake positivity.</p>
-            <p className="font-medium text-emerald-400">
+            <p className="font-medium text-[#ffb84d]">
               Just the truth about your money.
             </p>
           </div>
@@ -231,7 +314,7 @@ export function OnboardingWizard() {
       {currentStep === "profile" && (
         <Card>
           <CardContent className="space-y-4 p-6">
-            <h2 className="text-xl font-semibold">About you</h2>
+            <h2 className="font-display text-xl font-semibold">About you</h2>
             <div className="space-y-2">
               <Label>Display name</Label>
               <Input
@@ -244,8 +327,8 @@ export function OnboardingWizard() {
               <Label>Payday frequency</Label>
               <select
                 value={paydayFrequency}
-                onChange={(e) => setPaydayFrequency(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                onChange={(e) => setPaydayFrequency(e.target.value as PaydayFrequency)}
+                className="w-full rounded-xl border border-white/10 bg-[#17140f] px-4 py-2.5 text-sm"
               >
                 <option value="weekly">Weekly</option>
                 <option value="fortnightly">Fortnightly</option>
@@ -257,8 +340,8 @@ export function OnboardingWizard() {
               <Label>Income type</Label>
               <select
                 value={incomeType}
-                onChange={(e) => setIncomeType(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                onChange={(e) => setIncomeType(e.target.value as IncomeType)}
+                className="w-full rounded-xl border border-white/10 bg-[#17140f] px-4 py-2.5 text-sm"
               >
                 <option value="hourly">Hourly</option>
                 <option value="salary">Salary</option>
@@ -285,8 +368,8 @@ export function OnboardingWizard() {
                     onClick={() => setTone(t)}
                     className={`rounded-xl border px-3 py-2 text-sm capitalize ${
                       tone === t
-                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
-                        : "border-zinc-700 text-zinc-400"
+                        ? "border-[#ffb84d] bg-[#ffb84d]/10 text-[#ffb84d]"
+                        : "border-white/10 text-[#9a9186]"
                     }`}
                   >
                     {TONE_LABELS[t]}
@@ -294,9 +377,48 @@ export function OnboardingWizard() {
                 ))}
               </div>
             </div>
-            <Button onClick={() => setStep(2)} className="w-full">
-              Continue
-            </Button>
+            <div className="space-y-2">
+              <Label>Caution level</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    ["relaxed", "Relaxed"],
+                    ["balanced", "Balanced"],
+                    ["conservative", "Cautious"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setCautionLevel(value)}
+                    className={`rounded-xl border px-3 py-2 text-sm ${
+                      cautionLevel === value
+                        ? "border-[#ffb84d] bg-[#ffb84d]/10 text-[#ffb84d]"
+                        : "border-white/10 text-[#9a9186]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {!isEdit && (
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setStep(0)}
+                >
+                  Back
+                </Button>
+              )}
+              <Button
+                onClick={() => setStep(step + 1)}
+                className="flex-1"
+              >
+                Continue
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -305,8 +427,8 @@ export function OnboardingWizard() {
         <Card>
           <CardContent className="space-y-5 p-6">
             <div>
-              <h2 className="text-xl font-semibold">Living costs</h2>
-              <p className="mt-1 text-sm text-zinc-400">
+              <h2 className="font-display text-xl font-semibold">Living costs</h2>
+              <p className="mt-1 text-sm text-[#9a9186]">
                 So Safe-to-Spend knows what&apos;s already spoken for — including
                 your share of shared rent.
               </p>
@@ -325,8 +447,8 @@ export function OnboardingWizard() {
                     onClick={() => setHasCar(opt.value)}
                     className={`rounded-xl border px-3 py-2.5 text-sm ${
                       hasCar === opt.value
-                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
-                        : "border-zinc-700 text-zinc-400"
+                        ? "border-[#ffb84d] bg-[#ffb84d]/10 text-[#ffb84d]"
+                        : "border-white/10 text-[#9a9186]"
                     }`}
                   >
                     {opt.label}
@@ -334,7 +456,7 @@ export function OnboardingWizard() {
                 ))}
               </div>
               {hasCar && (
-                <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                <div className="space-y-3 rounded-xl border border-white/10 bg-black/20 p-4">
                   <div className="space-y-2">
                     <Label>Car / finance payment (your amount)</Label>
                     <Input
@@ -355,7 +477,7 @@ export function OnboardingWizard() {
                             e.target.value as RecurringFrequency
                           )
                         }
-                        className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                        className="w-full rounded-xl border border-white/10 bg-[#17140f] px-4 py-2.5 text-sm"
                       >
                         {FREQUENCIES.map((f) => (
                           <option key={f.value} value={f.value}>
@@ -379,8 +501,8 @@ export function OnboardingWizard() {
                     onClick={() => setHousingStatus(opt.value)}
                     className={`rounded-xl border px-3 py-2.5 text-left text-sm ${
                       housingStatus === opt.value
-                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
-                        : "border-zinc-700 text-zinc-400"
+                        ? "border-[#ffb84d] bg-[#ffb84d]/10 text-[#ffb84d]"
+                        : "border-white/10 text-[#9a9186]"
                     }`}
                   >
                     {opt.label}
@@ -390,7 +512,7 @@ export function OnboardingWizard() {
             </div>
 
             {housingStatus === "rent" && (
-              <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+              <div className="space-y-3 rounded-xl border border-white/10 bg-black/20 p-4">
                 <div className="space-y-2">
                   <Label>Rent frequency</Label>
                   <select
@@ -398,7 +520,7 @@ export function OnboardingWizard() {
                     onChange={(e) =>
                       setRentFrequency(e.target.value as RecurringFrequency)
                     }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                    className="w-full rounded-xl border border-white/10 bg-[#17140f] px-4 py-2.5 text-sm"
                   >
                     {FREQUENCIES.map((f) => (
                       <option key={f.value} value={f.value}>
@@ -430,8 +552,8 @@ export function OnboardingWizard() {
                         onClick={() => setRentIsSplit(opt.value)}
                         className={`rounded-xl border px-3 py-2.5 text-sm ${
                           rentIsSplit === opt.value
-                            ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
-                            : "border-zinc-700 text-zinc-400"
+                            ? "border-[#ffb84d] bg-[#ffb84d]/10 text-[#ffb84d]"
+                            : "border-white/10 text-[#9a9186]"
                         }`}
                       >
                         {opt.label}
@@ -449,7 +571,7 @@ export function OnboardingWizard() {
                       onChange={(e) => setRentShare(e.target.value)}
                       placeholder="1400"
                     />
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-[#6f675e]">
                       Example: place is $2,200 total, you pay $1,400 — we only
                       count your share.
                     </p>
@@ -459,7 +581,7 @@ export function OnboardingWizard() {
             )}
 
             {housingStatus === "mortgage" && (
-              <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+              <div className="space-y-3 rounded-xl border border-white/10 bg-black/20 p-4">
                 <div className="space-y-2">
                   <Label>Mortgage repayment (AUD)</Label>
                   <Input
@@ -477,7 +599,7 @@ export function OnboardingWizard() {
                     onChange={(e) =>
                       setMortgageFrequency(e.target.value as RecurringFrequency)
                     }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                    className="w-full rounded-xl border border-white/10 bg-[#17140f] px-4 py-2.5 text-sm"
                   >
                     {FREQUENCIES.map((f) => (
                       <option key={f.value} value={f.value}>
@@ -493,7 +615,7 @@ export function OnboardingWizard() {
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={() => setStep(1)}
+                onClick={() => setStep(step - 1)}
               >
                 Back
               </Button>
@@ -506,7 +628,7 @@ export function OnboardingWizard() {
                     return;
                   }
                   setError(null);
-                  setStep(3);
+                  setStep(step + 1);
                 }}
               >
                 Continue
@@ -519,10 +641,12 @@ export function OnboardingWizard() {
       {currentStep === "priorities" && (
         <Card>
           <CardContent className="space-y-4 p-6">
-            <h2 className="text-xl font-semibold">Financial priorities</h2>
-            <p className="text-sm text-zinc-400">Select what matters to you.</p>
+            <h2 className="font-display text-xl font-semibold">
+              Financial priorities
+            </h2>
+            <p className="text-sm text-[#9a9186]">Select what matters to you.</p>
             <div className="flex flex-wrap gap-2">
-              {PRIORITIES.map((p) => (
+              {PRIORITY_OPTIONS.map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -535,8 +659,8 @@ export function OnboardingWizard() {
                   }
                   className={`rounded-full border px-4 py-2 text-sm ${
                     selectedPriorities.includes(p)
-                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
-                      : "border-zinc-700 text-zinc-400"
+                      ? "border-[#ffb84d] bg-[#ffb84d]/10 text-[#ffb84d]"
+                      : "border-white/10 text-[#9a9186]"
                   }`}
                 >
                   {p}
@@ -547,13 +671,23 @@ export function OnboardingWizard() {
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={() => setStep(2)}
+                onClick={() => setStep(step - 1)}
               >
                 Back
               </Button>
-              <Button onClick={() => setStep(4)} className="flex-1">
-                Continue
-              </Button>
+              {isEdit ? (
+                <Button
+                  onClick={handleSaveEdit}
+                  className="flex-1"
+                  disabled={loading}
+                >
+                  {loading ? "Saving..." : "Save changes"}
+                </Button>
+              ) : (
+                <Button onClick={() => setStep(step + 1)} className="flex-1">
+                  Continue
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -562,12 +696,14 @@ export function OnboardingWizard() {
       {currentStep === "data" && (
         <Card>
           <CardContent className="space-y-4 p-6">
-            <h2 className="text-xl font-semibold">Set up your data</h2>
+            <h2 className="font-display text-xl font-semibold">
+              Set up your data
+            </h2>
             <Button onClick={handleDemo} className="w-full" disabled={loading}>
               {loading ? "Setting up..." : "Use demo data"}
             </Button>
             <Button
-              onClick={handleImport}
+              onClick={() => finishOnboarding("/import")}
               variant="outline"
               className="w-full"
               disabled={loading}
@@ -575,7 +711,7 @@ export function OnboardingWizard() {
               Import bank CSV
             </Button>
             <Button
-              onClick={handleConnectBank}
+              onClick={() => finishOnboarding("/banks")}
               variant="outline"
               className="w-full"
               disabled={loading}
@@ -585,14 +721,14 @@ export function OnboardingWizard() {
             <Button
               variant="ghost"
               className="w-full"
-              onClick={handleSkip}
+              onClick={() => finishOnboarding("/home")}
               disabled={loading}
             >
               Skip for now
             </Button>
-            <p className="text-center text-xs text-zinc-500">
+            <p className="text-center text-xs text-[#6f675e]">
               You can also open{" "}
-              <Link href="/banks" className="text-emerald-400">
+              <Link href="/banks" className="text-[#ffb84d]">
                 Connect bank
               </Link>{" "}
               anytime after setup.

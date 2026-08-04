@@ -18,6 +18,7 @@ import {
   Upload,
   HelpCircle,
   Landmark,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +50,7 @@ const tertiaryActions = [
   { href: "/import", label: "Upload statement", icon: Upload },
   { href: "/activity/review", label: "Review unknown", icon: HelpCircle },
   { href: "/banks", label: "Connect bank", icon: Landmark },
+  { href: "/profile", label: "Settings & profile", icon: Settings },
 ];
 
 function NavLink({

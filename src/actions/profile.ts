@@ -29,6 +29,8 @@ const profileSchema = z.object({
   incomeType: z.enum(["hourly", "salary", "variable", "mixed"]),
   incomeCents: z.number().optional(),
   financialTone: z.enum(["direct", "blunt", "roast"]),
+  cautionLevel: z.enum(["relaxed", "balanced", "conservative"]).optional(),
+  financialPriorities: z.array(z.string().max(80)).max(20).optional(),
   hasCar: z.boolean().optional(),
   carPaymentCents: z.number().nullable().optional(),
   carPaymentFrequency: paymentFrequency.nullable().optional(),
@@ -39,6 +41,22 @@ const profileSchema = z.object({
   rentIsSplit: z.boolean().optional(),
   mortgagePaymentCents: z.number().nullable().optional(),
   mortgagePaymentFrequency: paymentFrequency.nullable().optional(),
+});
+
+const notificationSchema = z.object({
+  notifySalary: z.boolean(),
+  notifyBills: z.boolean(),
+  notifySafeToSpend: z.boolean(),
+  notifyGoals: z.boolean(),
+  notifyWishlist: z.boolean(),
+  notifyWeeklySummary: z.boolean(),
+  notifyUnusualTransactions: z.boolean(),
+});
+
+const quickSettingsSchema = z.object({
+  financialTone: z.enum(["direct", "blunt", "roast"]).optional(),
+  cautionLevel: z.enum(["relaxed", "balanced", "conservative"]).optional(),
+  displayName: z.string().min(1).max(100).optional(),
 });
 
 export async function updateProfile(data: z.infer<typeof profileSchema>) {
@@ -62,6 +80,12 @@ export async function updateProfile(data: z.infer<typeof profileSchema>) {
       income_type: d.incomeType,
       income_cents: d.incomeCents,
       financial_tone: d.financialTone,
+      ...(d.cautionLevel !== undefined
+        ? { caution_level: d.cautionLevel }
+        : {}),
+      ...(d.financialPriorities !== undefined
+        ? { financial_priorities: d.financialPriorities }
+        : {}),
       ...(d.hasCar !== undefined ? { has_car: d.hasCar } : {}),
       ...(d.carPaymentCents !== undefined
         ? { car_payment_cents: d.carPaymentCents }
@@ -93,6 +117,72 @@ export async function updateProfile(data: z.infer<typeof profileSchema>) {
 
   if (error) return { error: error.message };
   revalidatePath("/");
+  revalidatePath("/profile");
+  return { success: true };
+}
+
+export async function updateQuickSettings(
+  data: z.infer<typeof quickSettingsSchema>
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const parsed = quickSettingsSchema.safeParse(data);
+  if (!parsed.success) return { error: "Invalid settings" };
+
+  const d = parsed.data;
+  const { error } = await supabase
+    .from("profiles")
+    .update({
+      ...(d.displayName !== undefined ? { display_name: d.displayName } : {}),
+      ...(d.financialTone !== undefined
+        ? { financial_tone: d.financialTone }
+        : {}),
+      ...(d.cautionLevel !== undefined
+        ? { caution_level: d.cautionLevel }
+        : {}),
+    })
+    .eq("id", user.id);
+
+  if (error) return { error: error.message };
+  revalidatePath("/");
+  revalidatePath("/profile");
+  return { success: true };
+}
+
+export async function updateNotificationPreferences(
+  data: z.infer<typeof notificationSchema>
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  const parsed = notificationSchema.safeParse(data);
+  if (!parsed.success) return { error: "Invalid preferences" };
+
+  const d = parsed.data;
+  const { error } = await supabase.from("user_preferences").upsert(
+    {
+      user_id: user.id,
+      notify_salary: d.notifySalary,
+      notify_bills: d.notifyBills,
+      notify_safe_to_spend: d.notifySafeToSpend,
+      notify_goals: d.notifyGoals,
+      notify_wishlist: d.notifyWishlist,
+      notify_weekly_summary: d.notifyWeeklySummary,
+      notify_unusual_transactions: d.notifyUnusualTransactions,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) return { error: error.message };
+  revalidatePath("/profile");
   return { success: true };
 }
 

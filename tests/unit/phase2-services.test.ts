@@ -75,6 +75,7 @@ describe("HealthScoreService", () => {
       rentIsSplit: false,
       mortgagePaymentCents: null,
       mortgagePaymentFrequency: null,
+      financialPriorities: [],
     } satisfies Profile;
 
     const accounts: Account[] = [

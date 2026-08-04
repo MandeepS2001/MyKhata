@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/currency";
 import { cn } from "@/lib/utils";
-import { Activity, TrendingDown } from "lucide-react";
+import { Activity, Settings, TrendingDown } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -59,18 +59,27 @@ export default async function HomePage() {
   return (
     <AppShell>
       <div className="space-y-5">
-        <div className="mk-rise flex items-end justify-between">
+        <div className="mk-rise flex items-end justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-[#ffb84d]">MyKhata</p>
             <h1 className="font-display mt-1 text-3xl font-semibold tracking-tight text-[#f7f1e8]">
               Hey, {firstName}
             </h1>
           </div>
-          {data.profile.isDemo && (
-            <span className="rounded-full bg-[#ffb84d]/15 px-3 py-1 text-xs font-bold text-[#ffb84d]">
-              Demo
-            </span>
-          )}
+          <div className="flex items-center gap-2 pb-1">
+            {data.profile.isDemo && (
+              <span className="rounded-full bg-[#ffb84d]/15 px-3 py-1 text-xs font-bold text-[#ffb84d]">
+                Demo
+              </span>
+            )}
+            <Link
+              href="/profile"
+              aria-label="Settings"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-[#f7f1e8] hover:bg-white/10"
+            >
+              <Settings className="h-5 w-5" />
+            </Link>
+          </div>
         </div>
 
         <SafeToSpendHero

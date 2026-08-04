@@ -51,6 +51,9 @@ function mapProfile(row: Record<string, unknown>): Profile {
     mortgagePaymentFrequency:
       (row.mortgage_payment_frequency as Profile["mortgagePaymentFrequency"]) ??
       null,
+    financialPriorities: Array.isArray(row.financial_priorities)
+      ? (row.financial_priorities as string[])
+      : [],
   };
 }
 
