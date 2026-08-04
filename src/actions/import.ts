@@ -6,6 +6,11 @@ import {
   detectBankFormat,
   parseCsvContent,
 } from "@/domain/adapters/csv-adapters";
+import {
+  parseBalanceToCents,
+  resolveAccountBalanceCents,
+  signedTransactionCents,
+} from "@/lib/accounts/balance";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -34,9 +39,21 @@ export async function importCsvStatement(formData: FormData) {
   }
 
   const { accountId, csvContent, fileName } = parsed.data;
+
+  const { data: account } = await supabase
+    .from("accounts")
+    .select("id, account_type")
+    .eq("id", accountId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!account) {
+    return { error: "Account not found" };
+  }
+
   const rows = parseCsvContent(csvContent);
 
-  if (rows.length < 2) {
+  if (rows.length < 1) {
     return { error: "CSV file appears empty or invalid" };
   }
 
@@ -48,9 +65,12 @@ export async function importCsvStatement(formData: FormData) {
   }
 
   const normalised = adapter.parse(rows);
+  if (normalised.length === 0) {
+    return { error: "No transactions found in this CSV." };
+  }
+
   const errors: Array<{ row: number; message: string }> = [];
 
-  // Create import batch
   const { data: batch, error: batchError } = await supabase
     .from("import_batches")
     .insert({
@@ -68,7 +88,6 @@ export async function importCsvStatement(formData: FormData) {
     return { error: batchError?.message ?? "Failed to create import batch" };
   }
 
-  // Get user merchant rules
   const { data: merchantRules } = await supabase
     .from("merchant_rules")
     .select("*")
@@ -90,7 +109,6 @@ export async function importCsvStatement(formData: FormData) {
   for (let i = 0; i < normalised.length; i++) {
     const txn = normalised[i]!;
 
-    // Duplicate check
     if (txn.providerTransactionId) {
       const { data: existing } = await supabase
         .from("transactions")
@@ -139,6 +157,50 @@ export async function importCsvStatement(formData: FormData) {
     }
   }
 
+  const { data: allTxns } = await supabase
+    .from("transactions")
+    .select("amount_cents, direction, transaction_date, raw_metadata")
+    .eq("account_id", accountId)
+    .eq("user_id", user.id);
+
+  const importedBalances = (allTxns ?? [])
+    .map((t) => {
+      const meta = (t.raw_metadata ?? {}) as Record<string, unknown>;
+      const balanceCents = parseBalanceToCents(meta.balance);
+      if (balanceCents === null) return null;
+      return { date: t.transaction_date as string, balanceCents };
+    })
+    .filter((x): x is { date: string; balanceCents: number } => x !== null);
+
+  const transactionNetCents = (allTxns ?? []).reduce(
+    (sum, t) =>
+      sum +
+      signedTransactionCents(
+        t.amount_cents as number,
+        t.direction as "debit" | "credit"
+      ),
+    0
+  );
+
+  const balanceCents = resolveAccountBalanceCents({
+    accountType: account.account_type as string,
+    importedBalances,
+    transactionNetCents,
+  });
+
+  await supabase
+    .from("accounts")
+    .update({
+      current_balance_cents: balanceCents,
+      available_balance_cents:
+        account.account_type === "credit_card"
+          ? Math.max(0, balanceCents)
+          : balanceCents,
+      last_synced_at: new Date().toISOString(),
+    })
+    .eq("id", accountId)
+    .eq("user_id", user.id);
+
   await supabase
     .from("import_batches")
     .update({
@@ -166,11 +228,13 @@ export async function importCsvStatement(formData: FormData) {
       bankFormat: adapter.bankId,
       importedRows,
       duplicateRows,
+      balanceCents,
     },
   });
 
   revalidatePath("/home");
   revalidatePath("/activity");
+  revalidatePath("/import");
 
   return {
     success: true,
@@ -183,5 +247,6 @@ export async function importCsvStatement(formData: FormData) {
     understoodCount: importedRows - uncertainCount,
     uncertainCount,
     bankFormat: adapter.displayName,
+    balanceCents,
   };
 }

@@ -18,34 +18,44 @@ export type TransactionType =
   | "income"
   | "internal_transfer"
   | "credit_card_repayment"
+  | "credit_card_purchase"
+  | "savings_contribution"
+  | "savings_withdrawal"
   | "refund"
   | "reimbursement"
   | "cash_withdrawal"
   | "bill"
   | "subscription"
   | "shared_expense"
+  | "debt_payment"
+  | "debt_draw"
+  | "reversal"
   | "unknown";
 
 export const TRANSACTION_CATEGORIES = [
   "groceries",
-  "takeaway",
   "dining",
+  "takeaway",
   "fuel",
   "transport",
+  "shopping",
+  "entertainment",
+  "subscriptions",
+  "bills",
   "rent",
   "utilities",
   "insurance",
   "health",
-  "shopping",
-  "technology",
-  "entertainment",
-  "gym",
-  "subscriptions",
-  "education",
-  "work_expense",
   "travel",
-  "pet",
+  "salary",
   "income",
+  "education",
+  "personal_care",
+  "pet",
+  "pets",
+  "technology",
+  "gym",
+  "work_expense",
   "transfer",
   "debt_repayment",
   "savings",
@@ -53,6 +63,21 @@ export const TRANSACTION_CATEGORIES = [
 ] as const;
 
 export type TransactionCategory = (typeof TRANSACTION_CATEGORIES)[number];
+
+export type HousingStatus =
+  | "rent"
+  | "own_outright"
+  | "mortgage"
+  | "live_with_family"
+  | "other";
+
+export type RecurringFrequency =
+  | "weekly"
+  | "fortnightly"
+  | "monthly"
+  | "quarterly"
+  | "yearly"
+  | "irregular";
 
 export interface Profile {
   id: string;
@@ -72,6 +97,16 @@ export interface Profile {
   cautionLevel: CautionLevel;
   onboardingCompleted: boolean;
   isDemo: boolean;
+  hasCar: boolean;
+  carPaymentCents: number | null;
+  carPaymentFrequency: RecurringFrequency | null;
+  housingStatus: HousingStatus | null;
+  rentFrequency: RecurringFrequency | null;
+  rentTotalCents: number | null;
+  rentShareCents: number | null;
+  rentIsSplit: boolean;
+  mortgagePaymentCents: number | null;
+  mortgagePaymentFrequency: RecurringFrequency | null;
 }
 
 export interface Account {
@@ -88,7 +123,9 @@ export interface Account {
   currency: string;
   includedInSafeToSpend: boolean;
   isProtected: boolean;
+  includeInNetWorth: boolean;
   purpose: string | null;
+  icon: string | null;
   dataSource: DataSource;
   lastSyncedAt: string | null;
   isArchived: boolean;
@@ -109,7 +146,10 @@ export interface Transaction {
   subcategory: string | null;
   confidenceScore: number;
   transactionType: TransactionType;
+  /** Semantic behaviour — may be richer than persisted transactionType. */
+  behaviour: TransactionType;
   transferMatchId: string | null;
+  transferGroupId: string | null;
   isWorkExpense: boolean;
   workUsePercentage: number;
   isReimbursable: boolean;
@@ -166,6 +206,11 @@ export interface SafeToSpendResult {
   breakdown: BreakdownLine[];
   assumptions: string[];
   daysUntilPayday: number;
+  billsCovered: boolean;
+  savingsProtected: boolean;
+  dailyPaceCents: number;
+  breathingRoom: "comfortable" | "stable" | "tight" | "critical";
+  breathingRoomReason: string;
 }
 
 export type AffordabilityVerdict =

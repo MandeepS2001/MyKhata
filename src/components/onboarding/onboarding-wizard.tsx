@@ -6,22 +6,56 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { updateProfile } from "@/actions/profile";
+import { updateProfile, completeOnboarding } from "@/actions/profile";
 import { seedDemoData } from "@/actions/demo";
-import { completeOnboarding } from "@/actions/profile";
 import { TONE_LABELS, type FinancialTone } from "@/lib/tone";
 import { dollarsToCents } from "@/lib/currency";
+import type { HousingStatus, RecurringFrequency } from "@/domain/models";
+import Link from "next/link";
 
-const STEPS = ["welcome", "profile", "priorities", "data", "insight"] as const;
+const STEPS = ["welcome", "profile", "living", "priorities", "data"] as const;
 const PRIORITIES = [
-  "Emergency fund", "Business fund", "Travel", "Vehicle",
-  "Education", "Flight school", "House deposit", "Debt repayment", "General savings",
+  "Emergency fund",
+  "Business fund",
+  "Travel",
+  "Vehicle",
+  "Education",
+  "Flight school",
+  "House deposit",
+  "Debt repayment",
+  "General savings",
 ];
+
+const FREQUENCIES: { value: RecurringFrequency; label: string }[] = [
+  { value: "weekly", label: "Weekly" },
+  { value: "fortnightly", label: "Fortnightly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "yearly", label: "Yearly" },
+];
+
+const HOUSING_OPTIONS: { value: HousingStatus; label: string }[] = [
+  { value: "rent", label: "I rent" },
+  { value: "mortgage", label: "I have a mortgage" },
+  { value: "own_outright", label: "I own outright" },
+  { value: "live_with_family", label: "Live with family / no rent" },
+  { value: "other", label: "Other" },
+];
+
+function dollarsOrNull(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const n = parseFloat(trimmed);
+  if (Number.isNaN(n) || n < 0) return null;
+  return dollarsToCents(n);
+}
 
 export function OnboardingWizard() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const [displayName, setDisplayName] = useState("");
   const [paydayFrequency, setPaydayFrequency] = useState("monthly");
   const [incomeType, setIncomeType] = useState("salary");
@@ -29,16 +63,66 @@ export function OnboardingWizard() {
   const [tone, setTone] = useState<FinancialTone>("direct");
   const [selectedPriorities, setSelectedPriorities] = useState<string[]>([]);
 
-  async function handleDemo() {
-    setLoading(true);
-    await updateProfile({
-      displayName: displayName || "Mandeep",
+  const [hasCar, setHasCar] = useState(false);
+  const [carPayment, setCarPayment] = useState("");
+  const [carPaymentFrequency, setCarPaymentFrequency] =
+    useState<RecurringFrequency>("monthly");
+
+  const [housingStatus, setHousingStatus] = useState<HousingStatus | "">("");
+  const [rentFrequency, setRentFrequency] =
+    useState<RecurringFrequency>("weekly");
+  const [rentTotal, setRentTotal] = useState("");
+  const [rentIsSplit, setRentIsSplit] = useState(false);
+  const [rentShare, setRentShare] = useState("");
+  const [mortgagePayment, setMortgagePayment] = useState("");
+  const [mortgageFrequency, setMortgageFrequency] =
+    useState<RecurringFrequency>("monthly");
+
+  function livingPayload() {
+    const rentTotalCents = dollarsOrNull(rentTotal);
+    const rentShareCents = rentIsSplit
+      ? dollarsOrNull(rentShare)
+      : rentTotalCents;
+
+    return {
+      hasCar,
+      carPaymentCents: hasCar ? dollarsOrNull(carPayment) : null,
+      carPaymentFrequency: hasCar && carPayment.trim() ? carPaymentFrequency : null,
+      housingStatus: (housingStatus || null) as HousingStatus | null,
+      rentFrequency: housingStatus === "rent" ? rentFrequency : null,
+      rentTotalCents: housingStatus === "rent" ? rentTotalCents : null,
+      rentShareCents: housingStatus === "rent" ? rentShareCents : null,
+      rentIsSplit: housingStatus === "rent" ? rentIsSplit : false,
+      mortgagePaymentCents:
+        housingStatus === "mortgage" ? dollarsOrNull(mortgagePayment) : null,
+      mortgagePaymentFrequency:
+        housingStatus === "mortgage" && mortgagePayment.trim()
+          ? mortgageFrequency
+          : null,
+    };
+  }
+
+  async function saveProfile() {
+    return updateProfile({
+      displayName: displayName || "User",
       currency: "AUD",
       paydayFrequency: paydayFrequency as "monthly",
       incomeType: incomeType as "salary",
       incomeCents: income ? dollarsToCents(parseFloat(income)) : undefined,
       financialTone: tone,
+      ...livingPayload(),
     });
+  }
+
+  async function handleDemo() {
+    setLoading(true);
+    setError(null);
+    const result = await saveProfile();
+    if (result?.error) {
+      setError(result.error);
+      setLoading(false);
+      return;
+    }
     await seedDemoData();
     await completeOnboarding();
     router.push("/home");
@@ -46,8 +130,66 @@ export function OnboardingWizard() {
 
   async function handleSkip() {
     setLoading(true);
+    setError(null);
+    const result = await saveProfile();
+    if (result?.error) {
+      setError(result.error);
+      setLoading(false);
+      return;
+    }
     await completeOnboarding();
     router.push("/home");
+  }
+
+  async function handleImport() {
+    setLoading(true);
+    setError(null);
+    const result = await saveProfile();
+    if (result?.error) {
+      setError(result.error);
+      setLoading(false);
+      return;
+    }
+    await completeOnboarding();
+    router.push("/import");
+  }
+
+  async function handleConnectBank() {
+    setLoading(true);
+    setError(null);
+    const result = await saveProfile();
+    if (result?.error) {
+      setError(result.error);
+      setLoading(false);
+      return;
+    }
+    await completeOnboarding();
+    router.push("/banks");
+  }
+
+  function validateLiving(): string | null {
+    if (!housingStatus) return "Choose your housing situation.";
+    if (housingStatus === "rent") {
+      if (!rentTotal.trim()) return "Enter the total rent amount.";
+      if (rentIsSplit && !rentShare.trim()) {
+        return "Enter how much of the rent you pay.";
+      }
+      if (rentIsSplit) {
+        const total = parseFloat(rentTotal);
+        const share = parseFloat(rentShare);
+        if (!Number.isNaN(total) && !Number.isNaN(share) && share > total) {
+          return "Your share can’t be more than the total rent.";
+        }
+      }
+    }
+    if (housingStatus === "mortgage" && !mortgagePayment.trim()) {
+      return "Enter your mortgage payment (or choose a different housing option).";
+    }
+    if (hasCar && carPayment.trim()) {
+      const n = parseFloat(carPayment);
+      if (Number.isNaN(n) || n < 0) return "Enter a valid car payment amount.";
+    }
+    return null;
   }
 
   const currentStep = STEPS[step];
@@ -63,6 +205,12 @@ export function OnboardingWizard() {
         ))}
       </div>
 
+      {error && (
+        <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          {error}
+        </p>
+      )}
+
       {currentStep === "welcome" && (
         <div className="space-y-6 py-8 text-center">
           <h1 className="text-3xl font-bold text-zinc-100">Welcome to MyKhata</h1>
@@ -70,7 +218,9 @@ export function OnboardingWizard() {
             <p>No spreadsheets.</p>
             <p>No manual expense tracking.</p>
             <p>No fake positivity.</p>
-            <p className="text-emerald-400 font-medium">Just the truth about your money.</p>
+            <p className="font-medium text-emerald-400">
+              Just the truth about your money.
+            </p>
           </div>
           <Button onClick={() => setStep(1)} className="w-full" size="lg">
             Let&apos;s go
@@ -84,7 +234,11 @@ export function OnboardingWizard() {
             <h2 className="text-xl font-semibold">About you</h2>
             <div className="space-y-2">
               <Label>Display name</Label>
-              <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Mandeep" />
+              <Input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Mandeep"
+              />
             </div>
             <div className="space-y-2">
               <Label>Payday frequency</Label>
@@ -114,7 +268,12 @@ export function OnboardingWizard() {
             </div>
             <div className="space-y-2">
               <Label>Approximate monthly income (AUD)</Label>
-              <Input type="number" value={income} onChange={(e) => setIncome(e.target.value)} placeholder="4126" />
+              <Input
+                type="number"
+                value={income}
+                onChange={(e) => setIncome(e.target.value)}
+                placeholder="4126"
+              />
             </div>
             <div className="space-y-2">
               <Label>Financial tone</Label>
@@ -125,7 +284,9 @@ export function OnboardingWizard() {
                     type="button"
                     onClick={() => setTone(t)}
                     className={`rounded-xl border px-3 py-2 text-sm capitalize ${
-                      tone === t ? "border-emerald-500 bg-emerald-500/10 text-emerald-400" : "border-zinc-700 text-zinc-400"
+                      tone === t
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
+                        : "border-zinc-700 text-zinc-400"
                     }`}
                   >
                     {TONE_LABELS[t]}
@@ -133,7 +294,224 @@ export function OnboardingWizard() {
                 ))}
               </div>
             </div>
-            <Button onClick={() => setStep(2)} className="w-full">Continue</Button>
+            <Button onClick={() => setStep(2)} className="w-full">
+              Continue
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {currentStep === "living" && (
+        <Card>
+          <CardContent className="space-y-5 p-6">
+            <div>
+              <h2 className="text-xl font-semibold">Living costs</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                So Safe-to-Spend knows what&apos;s already spoken for — including
+                your share of shared rent.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <Label>Do you have a car?</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: true, label: "Yes" },
+                  { value: false, label: "No" },
+                ].map((opt) => (
+                  <button
+                    key={String(opt.value)}
+                    type="button"
+                    onClick={() => setHasCar(opt.value)}
+                    className={`rounded-xl border px-3 py-2.5 text-sm ${
+                      hasCar === opt.value
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
+                        : "border-zinc-700 text-zinc-400"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {hasCar && (
+                <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                  <div className="space-y-2">
+                    <Label>Car / finance payment (your amount)</Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={carPayment}
+                      onChange={(e) => setCarPayment(e.target.value)}
+                      placeholder="0 if owned outright"
+                    />
+                  </div>
+                  {carPayment.trim() && (
+                    <div className="space-y-2">
+                      <Label>Payment frequency</Label>
+                      <select
+                        value={carPaymentFrequency}
+                        onChange={(e) =>
+                          setCarPaymentFrequency(
+                            e.target.value as RecurringFrequency
+                          )
+                        }
+                        className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                      >
+                        {FREQUENCIES.map((f) => (
+                          <option key={f.value} value={f.value}>
+                            {f.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <Label>Housing</Label>
+              <div className="grid gap-2">
+                {HOUSING_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setHousingStatus(opt.value)}
+                    className={`rounded-xl border px-3 py-2.5 text-left text-sm ${
+                      housingStatus === opt.value
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
+                        : "border-zinc-700 text-zinc-400"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {housingStatus === "rent" && (
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                <div className="space-y-2">
+                  <Label>Rent frequency</Label>
+                  <select
+                    value={rentFrequency}
+                    onChange={(e) =>
+                      setRentFrequency(e.target.value as RecurringFrequency)
+                    }
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                  >
+                    {FREQUENCIES.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Total rent for the place (AUD)</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    value={rentTotal}
+                    onChange={(e) => setRentTotal(e.target.value)}
+                    placeholder="2200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Is rent split with someone else?</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { value: true, label: "Yes, split" },
+                      { value: false, label: "No, I pay all" },
+                    ].map((opt) => (
+                      <button
+                        key={String(opt.value)}
+                        type="button"
+                        onClick={() => setRentIsSplit(opt.value)}
+                        className={`rounded-xl border px-3 py-2.5 text-sm ${
+                          rentIsSplit === opt.value
+                            ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
+                            : "border-zinc-700 text-zinc-400"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {rentIsSplit && (
+                  <div className="space-y-2">
+                    <Label>What you pay (AUD)</Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={rentShare}
+                      onChange={(e) => setRentShare(e.target.value)}
+                      placeholder="1400"
+                    />
+                    <p className="text-xs text-zinc-500">
+                      Example: place is $2,200 total, you pay $1,400 — we only
+                      count your share.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {housingStatus === "mortgage" && (
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+                <div className="space-y-2">
+                  <Label>Mortgage repayment (AUD)</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    value={mortgagePayment}
+                    onChange={(e) => setMortgagePayment(e.target.value)}
+                    placeholder="2800"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Payment frequency</Label>
+                  <select
+                    value={mortgageFrequency}
+                    onChange={(e) =>
+                      setMortgageFrequency(e.target.value as RecurringFrequency)
+                    }
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm"
+                  >
+                    {FREQUENCIES.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setStep(1)}
+              >
+                Back
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  const msg = validateLiving();
+                  if (msg) {
+                    setError(msg);
+                    return;
+                  }
+                  setError(null);
+                  setStep(3);
+                }}
+              >
+                Continue
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -150,7 +528,9 @@ export function OnboardingWizard() {
                   type="button"
                   onClick={() =>
                     setSelectedPriorities((prev) =>
-                      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+                      prev.includes(p)
+                        ? prev.filter((x) => x !== p)
+                        : [...prev, p]
                     )
                   }
                   className={`rounded-full border px-4 py-2 text-sm ${
@@ -163,7 +543,18 @@ export function OnboardingWizard() {
                 </button>
               ))}
             </div>
-            <Button onClick={() => setStep(3)} className="w-full">Continue</Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setStep(2)}
+              >
+                Back
+              </Button>
+              <Button onClick={() => setStep(4)} className="flex-1">
+                Continue
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -175,32 +566,37 @@ export function OnboardingWizard() {
             <Button onClick={handleDemo} className="w-full" disabled={loading}>
               {loading ? "Setting up..." : "Use demo data"}
             </Button>
-            <Button variant="outline" className="w-full" onClick={() => router.push("/import")}>
-              Import CommBank CSV
+            <Button
+              onClick={handleImport}
+              variant="outline"
+              className="w-full"
+              disabled={loading}
+            >
+              Import bank CSV
             </Button>
-            <Button variant="outline" className="w-full" onClick={() => router.push("/import")}>
-              Import Westpac CSV
+            <Button
+              onClick={handleConnectBank}
+              variant="outline"
+              className="w-full"
+              disabled={loading}
+            >
+              Connect bank (Basiq)
             </Button>
-            <Button variant="ghost" className="w-full text-zinc-500" disabled>
-              Connect bank — Coming soon
-            </Button>
-            <Button variant="ghost" className="w-full" onClick={handleSkip}>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={handleSkip}
+              disabled={loading}
+            >
               Skip for now
             </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {currentStep === "insight" && (
-        <Card>
-          <CardContent className="space-y-4 p-6 text-center">
-            <h2 className="text-xl font-semibold text-emerald-400">You&apos;re all set</h2>
-            <p className="text-sm text-zinc-400">
-              Your balance looks healthy because rent has not left yet. That money is not free.
+            <p className="text-center text-xs text-zinc-500">
+              You can also open{" "}
+              <Link href="/banks" className="text-emerald-400">
+                Connect bank
+              </Link>{" "}
+              anytime after setup.
             </p>
-            <Button onClick={() => router.push("/home")} className="w-full">
-              Go to dashboard
-            </Button>
           </CardContent>
         </Card>
       )}

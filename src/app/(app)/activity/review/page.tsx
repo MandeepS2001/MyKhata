@@ -39,6 +39,7 @@ export default async function ReviewTransactionsPage() {
                 <TransactionCategoryButtons
                   transactionId={txn.id}
                   merchantPattern={txn.normalised_merchant ?? txn.description}
+                  currentCategory={txn.category}
                 />
               </CardContent>
             </Card>

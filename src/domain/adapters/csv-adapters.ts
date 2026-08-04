@@ -1,6 +1,6 @@
 import type { NormalisedTransaction } from "@/domain/models";
 import { parseToCents } from "@/lib/currency";
-import { parse, isValid } from "date-fns";
+import { format, parse, isValid } from "date-fns";
 
 export interface BankAdapter {
   readonly bankId: string;
@@ -14,24 +14,37 @@ function parseAustralianDate(value: string): string | null {
   for (const fmt of formats) {
     const parsed = parse(value.trim(), fmt, new Date());
     if (isValid(parsed)) {
-      return parsed.toISOString().split("T")[0] ?? null;
+      // Use local calendar date — toISOString() shifts AU midnights back a day.
+      return format(parsed, "yyyy-MM-dd");
     }
   }
   return null;
 }
 
+function looksLikeAmount(value: string): boolean {
+  const cleaned = value.replace(/["'$,\s]/g, "").trim();
+  if (!cleaned) return false;
+  if (/^(dr|cr)$/i.test(cleaned)) return false;
+  return /^-?\d+(\.\d+)?(dr|cr)?$/i.test(cleaned);
+}
+
 function parseAmount(value: string): { cents: number; direction: "debit" | "credit" } {
-  const cleaned = value.replace(/[$,\s]/g, "").trim();
-  if (cleaned.startsWith("-") || cleaned.includes("Dr")) {
-    const cents = parseToCents(cleaned.replace(/Dr/i, "").replace("-", ""));
+  const cleaned = value.replace(/["'$,\s]/g, "").trim();
+  if (cleaned.startsWith("-") || /dr$/i.test(cleaned)) {
+    const cents = parseToCents(cleaned.replace(/dr$/i, "").replace("-", ""));
     return { cents: Math.abs(cents), direction: "debit" };
   }
-  if (cleaned.includes("Cr") || !cleaned.startsWith("-")) {
-    const cents = parseToCents(cleaned.replace(/Cr/i, ""));
-    return { cents: Math.abs(cents), direction: cleaned.startsWith("-") ? "debit" : "credit" };
+  if (/cr$/i.test(cleaned)) {
+    const cents = parseToCents(cleaned.replace(/cr$/i, ""));
+    return { cents: Math.abs(cents), direction: "credit" };
   }
   const cents = parseToCents(cleaned);
-  return { cents: Math.abs(cents), direction: cents < 0 ? "debit" : "credit" };
+  return { cents: Math.abs(cents), direction: "credit" };
+}
+
+function isHeaderlessCommBankRow(cells: string[]): boolean {
+  if (cells.length < 3) return false;
+  return Boolean(parseAustralianDate(cells[0] ?? "")) && looksLikeAmount(cells[1] ?? "");
 }
 
 export class CommBankCsvAdapter implements BankAdapter {
@@ -39,36 +52,54 @@ export class CommBankCsvAdapter implements BankAdapter {
   readonly displayName = "CommBank";
 
   canParse(headers: string[]): boolean {
-    const h = headers.map((x) => x.toLowerCase());
+    if (isHeaderlessCommBankRow(headers)) return true;
+
+    const h = headers.map((x) => x.toLowerCase().replace(/['"]/g, "").trim());
     return (
       h.some((x) => x.includes("date")) &&
-      (h.some((x) => x.includes("amount")) || h.some((x) => x.includes("debit") || x.includes("credit")))
+      (h.some((x) => x.includes("amount")) ||
+        h.some((x) => x.includes("debit") || x.includes("credit")))
     );
   }
 
   parse(rows: string[][]): NormalisedTransaction[] {
-    if (rows.length < 2) return [];
-    const headers = rows[0]!.map((h) => h.toLowerCase().trim());
-    const dateIdx = headers.findIndex((h) => h.includes("date"));
-    const descIdx = headers.findIndex((h) => h.includes("description") || h.includes("narrative"));
-    const amountIdx = headers.findIndex((h) => h === "amount");
-    const debitIdx = headers.findIndex((h) => h.includes("debit"));
-    const creditIdx = headers.findIndex((h) => h.includes("credit"));
+    if (rows.length === 0) return [];
+
+    const headerless = isHeaderlessCommBankRow(rows[0]!);
+    const startIdx = headerless ? 0 : 1;
+
+    let dateIdx = 0;
+    let descIdx = 2;
+    let amountIdx = 1;
+    let debitIdx = -1;
+    let creditIdx = -1;
+    let balanceIdx = rows[0]!.length >= 4 ? 3 : -1;
+
+    if (!headerless) {
+      const headers = rows[0]!.map((h) => h.toLowerCase().replace(/['"]/g, "").trim());
+      dateIdx = headers.findIndex((h) => h.includes("date"));
+      descIdx = headers.findIndex((h) => h.includes("description") || h.includes("narrative"));
+      amountIdx = headers.findIndex((h) => h === "amount");
+      debitIdx = headers.findIndex((h) => h.includes("debit"));
+      creditIdx = headers.findIndex((h) => h.includes("credit"));
+      balanceIdx = headers.findIndex((h) => h.includes("balance"));
+      if (dateIdx < 0) return [];
+    }
 
     const results: NormalisedTransaction[] = [];
 
-    for (let i = 1; i < rows.length; i++) {
+    for (let i = startIdx; i < rows.length; i++) {
       const row = rows[i]!;
       if (!row[dateIdx]?.trim()) continue;
 
       const date = parseAustralianDate(row[dateIdx]!);
       if (!date) continue;
 
-      const description = row[descIdx]?.trim() ?? "Unknown";
+      const description = row[descIdx]?.trim() || "Unknown";
       let amountCents: number;
       let direction: "debit" | "credit";
 
-      if (amountIdx >= 0 && row[amountIdx]) {
+      if (amountIdx >= 0 && row[amountIdx]?.trim()) {
         const parsed = parseAmount(row[amountIdx]!);
         amountCents = parsed.cents;
         direction = parsed.direction;
@@ -76,10 +107,10 @@ export class CommBankCsvAdapter implements BankAdapter {
         const debitVal = row[debitIdx]?.trim();
         const creditVal = row[creditIdx]?.trim();
         if (debitVal) {
-          amountCents = parseToCents(debitVal);
+          amountCents = Math.abs(parseToCents(debitVal.replace(/["']/g, "")));
           direction = "debit";
         } else if (creditVal) {
-          amountCents = parseToCents(creditVal);
+          amountCents = Math.abs(parseToCents(creditVal.replace(/["']/g, "")));
           direction = "credit";
         } else {
           continue;
@@ -94,7 +125,11 @@ export class CommBankCsvAdapter implements BankAdapter {
         normalisedMerchant: description.replace(/\s+/g, " ").slice(0, 80),
         amountCents,
         direction,
-        rawMetadata: { row: i, bank: "commbank" },
+        rawMetadata: {
+          row: i,
+          bank: "commbank",
+          balance: balanceIdx >= 0 ? row[balanceIdx] : undefined,
+        },
       });
     }
 
@@ -107,7 +142,10 @@ export class WestpacCsvAdapter implements BankAdapter {
   readonly displayName = "Westpac";
 
   canParse(headers: string[]): boolean {
-    const h = headers.map((x) => x.toLowerCase());
+    // Avoid claiming headerless CommBank files.
+    if (isHeaderlessCommBankRow(headers)) return false;
+
+    const h = headers.map((x) => x.toLowerCase().replace(/['"]/g, "").trim());
     return h.includes("date") && (h.includes("narrative") || h.includes("description"));
   }
 

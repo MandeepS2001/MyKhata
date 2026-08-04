@@ -1,0 +1,15 @@
+<!--
+  Supabase Dashboard → Authentication → Email Templates → Confirm signup
+
+  Replace the confirmation link with this so verification works across
+  browsers/devices without requiring the original PKCE cookie.
+-->
+<h2>Confirm your MyKhata account</h2>
+<p>Follow this link to verify your email:</p>
+<p>
+  <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup&next=/onboarding">
+    Confirm your email
+  </a>
+</p>
+<p>Or copy and paste this URL into your browser:</p>
+<p>{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup&next=/onboarding</p>

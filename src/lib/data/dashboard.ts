@@ -1,11 +1,23 @@
 import { createClient } from "@/lib/supabase/server";
 import { safeToSpendService } from "@/domain/services/safe-to-spend.service";
-import type {
-  Account,
-  Profile,
-  SafeToSpendResult,
-  Transaction,
-} from "@/domain/models";
+import { recurringPaymentService } from "@/domain/services/recurring.service";
+import { cashFlowForecastService } from "@/domain/services/cashflow.service";
+import { healthScoreService } from "@/domain/services/health-score.service";
+import { insightService, type StructuredInsight } from "@/domain/services/insight.service";
+import {
+  calculateMoneyPosition,
+  isRealExpense,
+  type MoneyPosition,
+} from "@/domain/services/money-position.service";
+import { mapAccountRow, mapTransactionRow } from "@/lib/data/mappers";
+import { narrateHomeSummary } from "@/lib/ai/coach";
+import {
+  declaredLivingCostsUntilPayday,
+  looksLikeDeclaredCar,
+  looksLikeDeclaredHousing,
+} from "@/lib/living-costs";
+import { addDays, parseISO } from "date-fns";
+import type { Profile, SafeToSpendResult, Transaction } from "@/domain/models";
 
 function mapProfile(row: Record<string, unknown>): Profile {
   return {
@@ -26,55 +38,64 @@ function mapProfile(row: Record<string, unknown>): Profile {
     cautionLevel: row.caution_level as Profile["cautionLevel"],
     onboardingCompleted: row.onboarding_completed as boolean,
     isDemo: row.is_demo as boolean,
+    hasCar: Boolean(row.has_car),
+    carPaymentCents: (row.car_payment_cents as number | null) ?? null,
+    carPaymentFrequency:
+      (row.car_payment_frequency as Profile["carPaymentFrequency"]) ?? null,
+    housingStatus: (row.housing_status as Profile["housingStatus"]) ?? null,
+    rentFrequency: (row.rent_frequency as Profile["rentFrequency"]) ?? null,
+    rentTotalCents: (row.rent_total_cents as number | null) ?? null,
+    rentShareCents: (row.rent_share_cents as number | null) ?? null,
+    rentIsSplit: Boolean(row.rent_is_split),
+    mortgagePaymentCents: (row.mortgage_payment_cents as number | null) ?? null,
+    mortgagePaymentFrequency:
+      (row.mortgage_payment_frequency as Profile["mortgagePaymentFrequency"]) ??
+      null,
   };
 }
 
-function mapAccount(row: Record<string, unknown>): Account {
-  return {
-    id: row.id as string,
-    userId: row.user_id as string,
-    institutionId: row.institution_id as string | null,
-    name: row.name as string,
-    accountType: row.account_type as Account["accountType"],
-    institutionLabel: row.institution_label as string | null,
-    maskedIdentifier: row.masked_identifier as string | null,
-    currentBalanceCents: row.current_balance_cents as number,
-    availableBalanceCents: row.available_balance_cents as number,
-    creditLimitCents: row.credit_limit_cents as number | null,
-    currency: row.currency as string,
-    includedInSafeToSpend: row.included_in_safe_to_spend as boolean,
-    isProtected: row.is_protected as boolean,
-    purpose: row.purpose as string | null,
-    dataSource: row.data_source as Account["dataSource"],
-    lastSyncedAt: row.last_synced_at as string | null,
-    isArchived: row.is_archived as boolean,
-  };
+function topCategoriesLast30Days(
+  transactions: Transaction[]
+): Array<{ category: string; amountCents: number }> {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+
+  const totals = new Map<string, number>();
+  for (const t of transactions) {
+    if (t.direction !== "debit") continue;
+    if (!isRealExpense(t.behaviour ?? t.transactionType)) continue;
+    if (new Date(t.transactionDate) < cutoff) continue;
+    totals.set(t.category, (totals.get(t.category) ?? 0) + t.amountCents);
+  }
+
+  return [...totals.entries()]
+    .map(([category, amountCents]) => ({ category, amountCents }))
+    .sort((a, b) => b.amountCents - a.amountCents)
+    .slice(0, 5);
 }
 
-function mapTransaction(row: Record<string, unknown>): Transaction {
-  return {
-    id: row.id as string,
-    userId: row.user_id as string,
-    accountId: row.account_id as string,
-    providerTransactionId: row.provider_transaction_id as string | null,
-    transactionDate: row.transaction_date as string,
-    postedDate: row.posted_date as string | null,
-    description: row.description as string,
-    normalisedMerchant: row.normalised_merchant as string | null,
-    amountCents: row.amount_cents as number,
-    direction: row.direction as Transaction["direction"],
-    category: row.category as string,
-    subcategory: row.subcategory as string | null,
-    confidenceScore: row.confidence_score as number,
-    transactionType: row.transaction_type as Transaction["transactionType"],
-    transferMatchId: row.transfer_match_id as string | null,
-    isWorkExpense: row.is_work_expense as boolean,
-    workUsePercentage: row.work_use_percentage as number,
-    isReimbursable: row.is_reimbursable as boolean,
-    notes: row.notes as string | null,
-    source: row.source as Transaction["source"],
-    importBatchId: row.import_batch_id as string | null,
-  };
+/** Simple month-over-month spending pace comparison, used to flag "running hot". */
+function calculateSpendingVelocityPct(transactions: Transaction[]): number {
+  const now = new Date();
+  const thirtyAgo = new Date(now);
+  thirtyAgo.setDate(now.getDate() - 30);
+  const sixtyAgo = new Date(now);
+  sixtyAgo.setDate(now.getDate() - 60);
+
+  const sumBetween = (from: Date, to: Date) =>
+    transactions
+      .filter((t) => {
+        if (t.direction !== "debit") return false;
+        if (!isRealExpense(t.behaviour ?? t.transactionType)) return false;
+        const date = new Date(t.transactionDate);
+        return date >= from && date < to;
+      })
+      .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
+
+  const recent = sumBetween(thirtyAgo, now);
+  const previous = sumBetween(sixtyAgo, thirtyAgo);
+  if (previous <= 0) return 0;
+  return Math.round(((recent - previous) / previous) * 100);
 }
 
 export async function getDashboardData() {
@@ -98,7 +119,7 @@ export async function getDashboardData() {
         .select("*")
         .eq("user_id", user.id)
         .order("transaction_date", { ascending: false })
-        .limit(100),
+        .limit(500),
       supabase
         .from("insights")
         .select("*")
@@ -117,8 +138,8 @@ export async function getDashboardData() {
   if (!profileRes.data) return null;
 
   const profile = mapProfile(profileRes.data);
-  const accounts = (accountsRes.data ?? []).map(mapAccount);
-  const transactions = (transactionsRes.data ?? []).map(mapTransaction);
+  const accounts = (accountsRes.data ?? []).map(mapAccountRow);
+  const transactions = (transactionsRes.data ?? []).map(mapTransactionRow);
 
   const daysUntilPayday = profile.nextPayday
     ? Math.max(
@@ -130,56 +151,139 @@ export async function getDashboardData() {
       )
     : 30;
 
+  const recurring = recurringPaymentService.detect(transactions);
+
+  const paydayCutoff = addDays(new Date(), daysUntilPayday);
+  const declaredLiving = declaredLivingCostsUntilPayday(profile, daysUntilPayday);
+  const hasDeclaredHousing =
+    (profile.housingStatus === "rent" && (profile.rentShareCents ?? 0) > 0) ||
+    (profile.housingStatus === "mortgage" &&
+      (profile.mortgagePaymentCents ?? 0) > 0);
+  const hasDeclaredCar =
+    profile.hasCar && (profile.carPaymentCents ?? 0) > 0;
+
+  const upcomingBillsCents =
+    declaredLiving.totalCents +
+    recurring
+      .filter((r) => {
+        if (!r.isEssential || parseISO(r.nextExpectedDate) > paydayCutoff) {
+          return false;
+        }
+        // Prefer onboarding-declared rent/car so we don't double-count.
+        if (
+          hasDeclaredHousing &&
+          looksLikeDeclaredHousing(r.merchant, r.category ?? "")
+        ) {
+          return false;
+        }
+        if (
+          hasDeclaredCar &&
+          looksLikeDeclaredCar(r.merchant, r.category ?? "")
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .reduce((sum, r) => sum + r.typicalAmountCents, 0);
+
+  const subscriptionCents = recurring
+    .filter(
+      (r) =>
+        !r.isEssential && parseISO(r.nextExpectedDate) <= paydayCutoff
+    )
+    .reduce((sum, r) => sum + r.typicalAmountCents, 0);
+
   const expectedEssential = safeToSpendService.estimateEssentialSpend(
     transactions,
     daysUntilPayday
   );
 
-  // Estimate upcoming bills from recurring patterns
-  const billCategories = new Set(["rent", "utilities", "insurance"]);
-  const upcomingBillsCents = transactions
-    .filter(
-      (t) =>
-        billCategories.has(t.category) &&
-        t.transactionType === "bill" &&
-        new Date(t.transactionDate) >
-          new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)
-    )
-    .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
-
-  const subscriptionCents = transactions
-    .filter(
-      (t) =>
-        (t.category === "subscriptions" || t.transactionType === "subscription") &&
-        new Date(t.transactionDate) >
-          new Date(Date.now() - 35 * 24 * 60 * 60 * 1000)
-    )
-    .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
+  const spendingVelocityPct = calculateSpendingVelocityPct(transactions);
 
   const safeToSpend: SafeToSpendResult = safeToSpendService.calculate({
     profile,
     accounts,
-    upcomingBillsCents: Math.round(upcomingBillsCents * 0.8),
+    upcomingBillsCents,
     upcomingSubscriptionsCents: subscriptionCents,
     expectedEssentialSpendCents: expectedEssential,
     plannedGoalContributionsCents: 0,
     wishlistReservationsCents: 0,
     expectedIncomeCents: 0,
     transactionHistoryMonths: Math.min(3, transactions.length > 30 ? 3 : 1),
+    includeGeneralSavings: false,
+    spendingVelocityPct,
   });
+
+  const moneyPosition: MoneyPosition = calculateMoneyPosition(accounts, {
+    includeGeneralSavingsInSpendable: false,
+  });
+
+  const cashFlow = cashFlowForecastService.forecast({
+    accounts,
+    recurring,
+    expectedIncomeCents: profile.incomeCents ?? 0,
+    nextPayday: profile.nextPayday,
+  });
+
+  const healthScore = healthScoreService.calculate({
+    profile,
+    accounts,
+    transactions,
+    recurring,
+    safeToSpendCents: safeToSpend.safeToSpendCents,
+  });
+
+  const creditCardDebtCents = moneyPosition.creditCardOwedCents;
+  const totalCashCents = moneyPosition.everydayCents + moneyPosition.cashCents;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const fourteenDaysOut = addDays(today, 14);
+  const upcomingRecurring = recurring
+    .filter((r) => {
+      const next = parseISO(r.nextExpectedDate);
+      return next >= today && next <= fourteenDaysOut;
+    })
+    .sort((a, b) => a.nextExpectedDate.localeCompare(b.nextExpectedDate));
 
   const uncertainCount = transactions.filter(
     (t) => t.confidenceScore < 0.6
   ).length;
+
+  const topCategories = topCategoriesLast30Days(transactions);
+
+  const khataInsights: StructuredInsight[] = insightService.generate(transactions);
+
+  const aiSummary = await narrateHomeSummary({
+    tone: profile.financialTone,
+    displayName: profile.displayName,
+    safeToSpendCents: safeToSpend.safeToSpendCents,
+    daysUntilPayday: safeToSpend.daysUntilPayday,
+    creditCardDebtCents,
+    upcomingBillsCents,
+    topCategories,
+    uncertainCount,
+  });
 
   return {
     profile,
     accounts,
     transactions: transactions.slice(0, 8),
     insights: insightsRes.data ?? [],
+    khataInsights,
     goals: goalsRes.data ?? [],
     safeToSpend,
+    moneyPosition,
     uncertainCount,
     totalTransactions: transactions.length,
+    upcomingBillsCents,
+    recurring,
+    cashFlow,
+    healthScore,
+    aiSummary,
+    upcomingRecurring,
+    creditCardDebtCents,
+    totalCashCents,
+    spendingVelocityPct,
   };
 }

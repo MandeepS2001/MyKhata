@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { importCsvStatement } from "@/actions/import";
+import { parseCsvContent } from "@/domain/adapters/csv-adapters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Upload } from "lucide-react";
@@ -31,8 +32,8 @@ export function CsvImportForm({ accounts }: CsvImportFormProps) {
     setError(null);
     setResult(null);
     const text = await f.text();
-    const lines = text.split(/\r?\n/).filter((l) => l.trim()).slice(0, 6);
-    setPreview(lines.map((l) => l.split(",").map((c) => c.trim())));
+    const rows = parseCsvContent(text).slice(0, 6);
+    setPreview(rows);
   }
 
   async function handleImport() {
@@ -79,6 +80,9 @@ export function CsvImportForm({ accounts }: CsvImportFormProps) {
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
+            <p className="text-xs text-zinc-500">
+              Import each bank account into its own MyKhata account (e.g. Everyday vs Credit card).
+            </p>
           </div>
 
           <label

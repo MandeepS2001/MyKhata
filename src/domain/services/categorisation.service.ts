@@ -30,7 +30,7 @@ const GLOBAL_MERCHANT_RULES: Array<{
   { pattern: /officeworks|jb hi-fi|harvey norman|apple store/i, category: "technology", type: "expense" },
   { pattern: /salary|payroll|wages|itsoft/i, category: "income", type: "income" },
   { pattern: /transfer|tfr|osko|pay anyone/i, category: "transfer", type: "internal_transfer" },
-  { pattern: /credit card payment|cc payment|card payment/i, category: "transfer", type: "credit_card_repayment" },
+  { pattern: /credit card payment|cc payment|card payment|payment received.*thank you/i, category: "transfer", type: "credit_card_repayment" },
 ];
 
 const KEYWORD_RULES: Array<{

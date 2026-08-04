@@ -20,6 +20,16 @@ const baseProfile: Profile = {
   cautionLevel: "balanced",
   onboardingCompleted: true,
   isDemo: false,
+  hasCar: false,
+  carPaymentCents: null,
+  carPaymentFrequency: null,
+  housingStatus: null,
+  rentFrequency: null,
+  rentTotalCents: null,
+  rentShareCents: null,
+  rentIsSplit: false,
+  mortgagePaymentCents: null,
+  mortgagePaymentFrequency: null,
 };
 
 const accounts: Account[] = [
@@ -37,7 +47,9 @@ const accounts: Account[] = [
     currency: "AUD",
     includedInSafeToSpend: true,
     isProtected: false,
+    includeInNetWorth: true,
     purpose: "Daily spending",
+    icon: null,
     dataSource: "mock",
     lastSyncedAt: null,
     isArchived: false,
@@ -56,7 +68,9 @@ const accounts: Account[] = [
     currency: "AUD",
     includedInSafeToSpend: true,
     isProtected: false,
+    includeInNetWorth: false,
     purpose: "Credit card",
+    icon: null,
     dataSource: "mock",
     lastSyncedAt: null,
     isArchived: false,
@@ -75,7 +89,9 @@ const accounts: Account[] = [
     currency: "AUD",
     includedInSafeToSpend: false,
     isProtected: true,
+    includeInNetWorth: true,
     purpose: "Business fund",
+    icon: null,
     dataSource: "mock",
     lastSyncedAt: null,
     isArchived: false,
@@ -101,6 +117,33 @@ describe("SafeToSpendService", () => {
     expect(result.safeToSpendCents).toBeGreaterThanOrEqual(0);
     expect(result.breakdown.length).toBeGreaterThan(3);
     expect(result.confidence).toBe("high");
+    expect(typeof result.billsCovered).toBe("boolean");
+    expect(typeof result.savingsProtected).toBe("boolean");
+    expect(typeof result.dailyPaceCents).toBe("number");
+    expect([
+      "comfortable",
+      "stable",
+      "tight",
+      "critical",
+    ]).toContain(result.breathingRoom);
+    expect(result.breathingRoomReason.length).toBeGreaterThan(0);
+  });
+
+  it("marks breathing room as critical when bills are not covered", () => {
+    const result = service.calculate({
+      profile: baseProfile,
+      accounts,
+      upcomingBillsCents: 1000000,
+      upcomingSubscriptionsCents: 0,
+      expectedEssentialSpendCents: 0,
+      plannedGoalContributionsCents: 0,
+      wishlistReservationsCents: 0,
+      expectedIncomeCents: 0,
+      transactionHistoryMonths: 3,
+    });
+
+    expect(result.billsCovered).toBe(false);
+    expect(result.breathingRoom).toBe("critical");
   });
 
   it("excludes protected savings from usable cash", () => {
@@ -119,6 +162,10 @@ describe("SafeToSpendService", () => {
     const protectedLine = result.breakdown.find((b) =>
       b.label.includes("Protected")
     );
-    expect(protectedLine?.amountCents).toBe(-485000);
+    // Protected savings is shown as an excluded, informational (neutral) line —
+    // it is never subtracted from safe-to-spend because it was never included.
+    expect(protectedLine?.type).toBe("neutral");
+    expect(protectedLine?.amountCents).toBe(485000);
+    expect(result.safeToSpendCents).toBeLessThan(284700 + 416000);
   });
 });

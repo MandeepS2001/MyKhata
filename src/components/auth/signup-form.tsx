@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { getAuthErrorMessage } from "@/lib/auth/errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,24 +22,35 @@ export function SignupForm() {
     setLoading(true);
     setError(null);
 
-    const supabase = createClient();
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { display_name: displayName },
-        emailRedirectTo: `${window.location.origin}/onboarding`,
-      },
-    });
+    try {
+      const supabase = createClient();
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: displayName },
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding`,
+        },
+      });
 
-    if (error) {
-      setError(error.message);
+      if (signUpError) {
+        setError(getAuthErrorMessage(signUpError));
+        return;
+      }
+
+      // Supabase may return a user with no identities when the email is already registered
+      // (email enumeration protection) instead of an error.
+      if (data.user && (data.user.identities?.length ?? 0) === 0) {
+        setError("An account with this email already exists. Try signing in.");
+        return;
+      }
+
+      setSuccess(true);
+    } catch (err) {
+      setError(getAuthErrorMessage(err));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setSuccess(true);
-    setLoading(false);
   }
 
   if (success) {
@@ -47,7 +59,8 @@ export function SignupForm() {
         <CardContent className="p-6 text-center">
           <p className="text-lg font-semibold text-emerald-400">Check your email</p>
           <p className="mt-2 text-sm text-zinc-400">
-            We sent a verification link to {email}. Verify your email to continue.
+            We sent a verification link to {email}. After you confirm, you&apos;ll see
+            whether verification succeeded, then you can continue setup.
           </p>
         </CardContent>
       </Card>
@@ -92,13 +105,19 @@ export function SignupForm() {
               minLength={8}
             />
           </div>
-          {error && <p className="text-sm text-red-400" role="alert">{error}</p>}
+          {error && (
+            <p className="text-sm text-red-400" role="alert">
+              {error}
+            </p>
+          )}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? "Creating account..." : "Create account"}
           </Button>
           <p className="text-center text-sm text-zinc-400">
             Already have an account?{" "}
-            <Link href="/login" className="text-emerald-400">Sign in</Link>
+            <Link href="/login" className="text-emerald-400">
+              Sign in
+            </Link>
           </p>
         </form>
       </CardContent>

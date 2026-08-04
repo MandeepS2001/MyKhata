@@ -8,6 +8,11 @@ import type {
   SafeToSpendResult,
   Transaction,
 } from "@/domain/models";
+import {
+  calculateBreathingRoom,
+  calculateMoneyPosition,
+  isRealExpense,
+} from "@/domain/services/money-position.service";
 import { differenceInDays, parseISO } from "date-fns";
 
 export interface SafeToSpendInput {
@@ -20,6 +25,9 @@ export interface SafeToSpendInput {
   wishlistReservationsCents: number;
   expectedIncomeCents: number;
   transactionHistoryMonths: number;
+  includeGeneralSavings?: boolean;
+  creditCardPaymentDueCents?: number;
+  spendingVelocityPct?: number;
 }
 
 const CAUTION_BUFFER_MULTIPLIER: Record<CautionLevel, number> = {
@@ -40,42 +48,21 @@ export class SafeToSpendService {
       wishlistReservationsCents,
       expectedIncomeCents,
       transactionHistoryMonths,
+      includeGeneralSavings = false,
+      creditCardPaymentDueCents = 0,
+      spendingVelocityPct = 0,
     } = input;
 
     const daysUntilPayday = profile.nextPayday
       ? Math.max(0, differenceInDays(parseISO(profile.nextPayday), new Date()))
       : 30;
 
-    let usableCashCents = 0;
-    let protectedSavingsCents = 0;
-    let creditCardOwedCents = 0;
+    const position = calculateMoneyPosition(accounts, {
+      includeGeneralSavingsInSpendable: includeGeneralSavings,
+    });
 
-    for (const account of accounts) {
-      if (account.isArchived) continue;
-
-      if (account.accountType === "credit_card") {
-        creditCardOwedCents = addCents(
-          creditCardOwedCents,
-          Math.max(0, -account.currentBalanceCents)
-        );
-        continue;
-      }
-
-      if (account.isProtected) {
-        protectedSavingsCents = addCents(
-          protectedSavingsCents,
-          account.availableBalanceCents
-        );
-        continue;
-      }
-
-      if (account.includedInSafeToSpend) {
-        usableCashCents = addCents(
-          usableCashCents,
-          account.availableBalanceCents
-        );
-      }
-    }
+    const usableCashCents = position.spendableCashCents;
+    const ccPayment = creditCardPaymentDueCents;
 
     const bufferMultiplier =
       CAUTION_BUFFER_MULTIPLIER[profile.cautionLevel] ?? 1;
@@ -84,7 +71,11 @@ export class SafeToSpendService {
     );
 
     const breakdown: BreakdownLine[] = [
-      { label: "Usable cash", amountCents: usableCashCents, type: "positive" },
+      {
+        label: "Available cash",
+        amountCents: usableCashCents,
+        type: "positive",
+      },
     ];
 
     if (expectedIncomeCents > 0) {
@@ -95,17 +86,9 @@ export class SafeToSpendService {
       });
     }
 
-    if (creditCardOwedCents > 0) {
-      breakdown.push({
-        label: "Credit card owed",
-        amountCents: -creditCardOwedCents,
-        type: "negative",
-      });
-    }
-
     if (upcomingBillsCents > 0) {
       breakdown.push({
-        label: "Bills before payday",
+        label: "Upcoming bills",
         amountCents: -upcomingBillsCents,
         type: "negative",
       });
@@ -121,23 +104,31 @@ export class SafeToSpendService {
 
     if (expectedEssentialSpendCents > 0) {
       breakdown.push({
-        label: "Expected groceries & fuel",
+        label: "Expected essentials (food + fuel)",
         amountCents: -expectedEssentialSpendCents,
         type: "negative",
       });
     }
 
-    if (protectedSavingsCents > 0) {
+    if (ccPayment > 0) {
+      breakdown.push({
+        label: "Credit card payment due",
+        amountCents: -ccPayment,
+        type: "negative",
+      });
+    }
+
+    if (position.protectedSavingsCents > 0) {
       breakdown.push({
         label: "Protected savings (excluded)",
-        amountCents: -protectedSavingsCents,
+        amountCents: position.protectedSavingsCents,
         type: "neutral",
       });
     }
 
     if (plannedGoalContributionsCents > 0) {
       breakdown.push({
-        label: "Planned goal contributions",
+        label: "Planned savings contributions",
         amountCents: -plannedGoalContributionsCents,
         type: "negative",
       });
@@ -158,10 +149,10 @@ export class SafeToSpendService {
     });
 
     const obligations = addCents(
-      creditCardOwedCents,
       upcomingBillsCents,
       upcomingSubscriptionsCents,
       expectedEssentialSpendCents,
+      ccPayment,
       plannedGoalContributionsCents,
       wishlistReservationsCents,
       safetyBufferCents
@@ -169,11 +160,22 @@ export class SafeToSpendService {
 
     const safeToSpendCents = Math.max(
       0,
-      subtractCents(
-        addCents(usableCashCents, expectedIncomeCents),
-        obligations
-      )
+      subtractCents(addCents(usableCashCents, expectedIncomeCents), obligations)
     );
+
+    const billsCovered =
+      addCents(usableCashCents, expectedIncomeCents) >=
+      addCents(upcomingBillsCents, upcomingSubscriptionsCents, ccPayment);
+
+    const dailyPaceCents =
+      daysUntilPayday > 0 ? Math.round(safeToSpendCents / daysUntilPayday) : 0;
+
+    const breathing = calculateBreathingRoom({
+      safeToSpendCents,
+      daysUntilPayday,
+      billsCovered,
+      spendingVelocityPct,
+    });
 
     const { confidence, confidenceReason } = this.assessConfidence(
       transactionHistoryMonths,
@@ -187,11 +189,17 @@ export class SafeToSpendService {
       confidenceReason,
       breakdown,
       assumptions: [
-        "Based on current account balances and detected recurring payments.",
-        "Protected savings are excluded unless you override.",
+        "Based on spendable cash (everyday + wallet), not net worth.",
+        "Protected savings are never treated as free cash.",
+        "Credit card available limit is never treated as wealth.",
         `Caution level: ${profile.cautionLevel}.`,
       ],
       daysUntilPayday,
+      billsCovered,
+      savingsProtected: true,
+      dailyPaceCents,
+      breathingRoom: breathing.status,
+      breathingRoomReason: breathing.reason,
     };
   }
 
@@ -212,35 +220,41 @@ export class SafeToSpendService {
         confidence: "medium",
         confidenceReason:
           historyMonths < 2
-            ? "Medium confidence because only one month of transactions is available."
-            : "Medium confidence because your income is variable.",
+            ? "Medium confidence — only one month of history."
+            : "Medium confidence — variable income.",
       };
     }
     if (accountCount < 2) {
       return {
         confidence: "medium",
-        confidenceReason:
-          "Medium confidence because only one account is connected.",
+        confidenceReason: "Medium confidence — only one account on file.",
       };
     }
     return { confidence: "high" };
   }
 
-  /** Estimate essential spend from recent transaction pace */
   estimateEssentialSpend(
     transactions: Transaction[],
     daysUntilPayday: number
   ): number {
-    const essentialCategories = new Set(["groceries", "fuel", "transport"]);
+    const essentialCategories = new Set([
+      "groceries",
+      "fuel",
+      "transport",
+      "dining",
+      "takeaway",
+    ]);
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const recentEssential = transactions.filter(
-      (t) =>
+    const recentEssential = transactions.filter((t) => {
+      const behaviour = t.behaviour ?? t.transactionType;
+      return (
         essentialCategories.has(t.category) &&
-        t.transactionType === "expense" &&
+        isRealExpense(behaviour) &&
         new Date(t.transactionDate) >= thirtyDaysAgo
-    );
+      );
+    });
 
     const totalEssential = recentEssential.reduce(
       (sum, t) => addCents(sum, Math.abs(t.amountCents)),

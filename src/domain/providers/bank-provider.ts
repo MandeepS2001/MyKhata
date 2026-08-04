@@ -78,15 +78,15 @@ export class ComingSoonBankProvider extends BaseBankProvider {
 
   async createConnection(_userId: string): Promise<BankConnection> {
     void _userId;
-    throw new Error("Open Banking connections are coming soon.");
+    throw new Error("Use /banks to connect via Basiq Consent UI.");
   }
   async refreshConnection(_connectionId: string): Promise<BankConnection> {
     void _connectionId;
-    throw new Error("Open Banking connections are coming soon.");
+    throw new Error("Use Sync on /banks to refresh Basiq data.");
   }
   async listAccounts(_connectionId: string): Promise<BankAccount[]> {
     void _connectionId;
-    throw new Error("Open Banking connections are coming soon.");
+    throw new Error("Use Sync on /banks to refresh Basiq data.");
   }
   async listTransactions(
     _accountId: string,
@@ -96,18 +96,23 @@ export class ComingSoonBankProvider extends BaseBankProvider {
     void _accountId;
     void _from;
     void _to;
-    throw new Error("Open Banking connections are coming soon.");
+    throw new Error("Use Sync on /banks to refresh Basiq data.");
   }
   async disconnect(_connectionId: string): Promise<void> {
     void _connectionId;
-    throw new Error("Open Banking connections are coming soon.");
+    throw new Error("Manage connections in the Basiq Consent UI from /banks.");
   }
   async getConnectionStatus(_connectionId: string): Promise<BankConnection["status"]> {
     void _connectionId;
     return "disconnected";
   }
-  async renewConsent(_connectionId: string): Promise<BankConnection> {
-    void _connectionId;
-    throw new Error("Open Banking connections are coming soon.");
+  async renewConsent(connectionId: string): Promise<BankConnection> {
+    void connectionId;
+    throw new Error("Renew consent from /banks.");
   }
+}
+
+export function getBankProvider(providerId: string = "basiq"): BaseBankProvider {
+  if (providerId === "mock") return new MockBankProvider();
+  return new ComingSoonBankProvider();
 }
